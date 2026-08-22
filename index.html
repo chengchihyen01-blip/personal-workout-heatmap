@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activity Heatmap | Personal Explorer</title>
+    <!-- Tailwind CSS for modern layout -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS for mapping -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- FIT File Parser Library (loaded as ESM, exposed as window.FitParser) -->
+    <script type="module">
+        import FitParser from 'https://cdn.jsdelivr.net/npm/fit-file-parser@1.21.0/+esm';
+        window.FitParser = FitParser;
+    </script>
+
+    <style>
+        #map {
+            height: calc(100vh - 80px);
+            width: 100%;
+            background: #0b0e14;
+        }
+        /* Custom scrollbar for a clean look */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+        /* Neon Orange-Red Glow effect for the heat tracks */
+        .leaflet-interactive {
+            filter: drop-shadow(0 0 5px rgba(255, 69, 0, 0.8));
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 overflow-hidden font-sans">
+
+    <!-- Top Navigation Bar (Orange-Red Theme) -->
+    <header class="h-20 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-6 shadow-xl relative z-[1100]">
+        <div class="flex items-center space-x-3">
+            <div class="bg-orange-600 p-2 rounded-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </div>
+            <h1 class="text-xl font-bold tracking-tight">Activity Heatmap <span class="text-sm font-normal text-gray-400 ml-2">Personal Explorer</span></h1>
+        </div>
+        
+        <div class="flex items-center space-x-4">
+            <!-- Stats -->
+            <div id="stats" class="hidden md:flex space-x-4 text-sm bg-gray-900 px-4 py-2 rounded-full border border-gray-700">
+                <span id="fileCount">Files: 0</span>
+                <span class="text-gray-600">|</span>
+                <span id="totalDist">Total Distance: 0.0 km</span>
+            </div>
+            <div class="flex space-x-2">
+                <button onclick="clearTracks()" class="text-gray-400 hover:text-white px-3 py-2 text-sm transition-colors font-medium">
+                    Reset
+                </button>
+                <label class="cursor-pointer bg-orange-600 hover:bg-orange-500 text-white px-5 py-2 rounded-full transition-all font-medium shadow-lg flex items-center space-x-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                    <span>Import GPX</span>
+                    <input type="file" id="mainInput" class="hidden" multiple accept=".gpx,.fit">
+                </label>
+            </div>
+        </div>
+    </header>
+
+    <main class="relative">
+        <!-- Map View -->
+        <div id="map"></div>
+        
+        <!-- Welcome Screen Overlay -->
+        <div id="welcomeOverlay" class="absolute inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity duration-500">
+            <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 max-w-md text-center shadow-2xl">
+                <h2 class="text-2xl font-bold mb-4 italic text-white">Ready to light up the streets?</h2>
+                <p class="text-gray-400 mb-6 leading-relaxed">
+                    Import your <strong>.GPX</strong> or <strong>.FIT</strong> activity files.<br>
+                    Drop multiple files here to visualize your history.
+                </p>
+                <button onclick="document.getElementById('welcomeOverlay').classList.add('opacity-0', 'pointer-events-none')" class="bg-orange-600 hover:bg-orange-500 text-white px-8 py-3 rounded-xl transition-all font-bold">
+                    Get Started
+                </button>
+            </div>
+        </div>
+        
+        <!-- Control Panel (Bottom Left) -->
+        <div class="absolute bottom-6 left-6 z-[1000] bg-gray-800/95 backdrop-blur border border-gray-700 p-4 rounded-xl shadow-2xl w-64">
+            <h3 class="font-bold mb-3 text-orange-500">Style Settings</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs text-gray-400 block mb-1">Track Color</label>
+                    <input type="color" id="colorPicker" value="#ff4500" class="w-full h-8 bg-transparent border-none cursor-pointer rounded">
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Line Weight</span>
+                        <span id="weightVal" class="text-orange-500">3</span>
+                    </div>
+                    <input type="range" id="widthSlider" min="1" max="10" value="3" class="w-full accent-orange-500">
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Opacity</span>
+                        <span id="opacityVal" class="text-orange-500">40%</span>
+                    </div>
+                    <input type="range" id="opacitySlider" min="5" max="100" value="40" class="w-full accent-orange-500">
+                </div>
+            </div>
+            
+            <!-- System Status Log -->
+            <div id="log" class="mt-4 pt-4 border-t border-gray-700 text-[10px] text-gray-500 max-h-32 overflow-y-auto font-mono">
+                System: Initializing...
+            </div>
+        </div>
+    </main>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Global State
+        const config = { color: '#ff4500', weight: 3, opacity: 0.4 };
+        let stats = { count: 0, distance: 0 };
+        
+        // Initialize Map centered in Amsterdam
+        const map = L.map('map', { 
+            zoomControl: false, 
+            renderer: L.canvas() 
+        }).setView([52.3676, 4.9041], 13);
+        
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        // Dark theme tiles
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; CARTO & OSM',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        const trackGroup = L.featureGroup().addTo(map);
+
+        /**
+         * Logs status messages to the UI console
+         */
+        function log(msg, isError = false) {
+            const logEl = document.getElementById('log');
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            logEl.innerHTML = `<div class="${isError ? 'text-red-400 font-bold' : ''}">[${time}] ${msg}</div>` + logEl.innerHTML;
+            logEl.scrollTop = 0;
+        }
+
+        /**
+         * Verifies and waits for the FIT Parser to be available
+         */
+        async function waitForParser() {
+            let attempts = 0;
+            while (typeof FitParser === 'undefined' && attempts < 10) {
+                log(`Waiting for component (${attempts + 1}/10)...`);
+                await new Promise(r => setTimeout(r, 600));
+                attempts++;
+            }
+            return typeof FitParser !== 'undefined';
+        }
+
+        window.onload = async () => {
+            const ok = await waitForParser();
+            if (!ok) log("Error: FIT parser failed to load.", true);
+            else log("System ready: Support for .gpx and .fit active");
+        };
+
+        /**
+         * Resets all data
+         */
+        function clearTracks() {
+            trackGroup.clearLayers();
+            stats = { count: 0, distance: 0 };
+            document.getElementById('fileCount').innerText = 'Files: 0';
+            document.getElementById('totalDist').innerText = 'Total Distance: 0.0 km';
+            log("Workspace cleared.");
+        }
+
+        // Style control listeners
+        document.getElementById('colorPicker').addEventListener('input', (e) => { 
+            config.color = e.target.value; 
+            updateGlobalStyles(); 
+        });
+        document.getElementById('widthSlider').addEventListener('input', (e) => { 
+            config.weight = parseInt(e.target.value); 
+            document.getElementById('weightVal').innerText = config.weight;
+            updateGlobalStyles(); 
+        });
+        document.getElementById('opacitySlider').addEventListener('input', (e) => { 
+            config.opacity = parseInt(e.target.value) / 100; 
+            document.getElementById('opacityVal').innerText = e.target.value + '%';
+            updateGlobalStyles(); 
+        });
+
+        function updateGlobalStyles() {
+            trackGroup.eachLayer(layer => {
+                if (layer instanceof L.Polyline) {
+                    layer.setStyle({ color: config.color, weight: config.weight, opacity: config.opacity });
+                }
+            });
+        }
+
+        /**
+         * File Import
+         */
+        const mainInput = document.getElementById('mainInput');
+        mainInput.addEventListener('change', (e) => handleImport(e.target.files));
+
+        async function handleImport(files) {
+            const list = Array.from(files);
+            if (!list.length) return;
+
+            if (list.some(f => f.name.toLowerCase().endsWith('.fit'))) {
+                const ok = await waitForParser();
+                if (!ok) { log("Aborted: Parser not ready.", true); return; }
+            }
+
+            document.getElementById('welcomeOverlay').classList.add('opacity-0', 'pointer-events-none');
+            document.getElementById('stats').classList.remove('hidden');
+            log(`Loading ${list.length} files...`);
+
+            for (const file of list) {
+                const name = file.name.toLowerCase();
+                try {
+                    if (name.endsWith('.gpx')) await processGPX(file);
+                    else if (name.endsWith('.fit')) await processFIT(file);
+                } catch (err) {
+                    log(`Fail: ${file.name.substring(0, 15)}... ${err.message}`, true);
+                }
+            }
+
+            if (trackGroup.getLayers().length > 0) {
+                map.fitBounds(trackGroup.getBounds(), { padding: [40, 40] });
+                log("Map view synchronized.");
+            }
+        }
+
+        function processGPX(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error("Read Error"));
+                reader.onload = (e) => {
+                    const xml = new DOMParser().parseFromString(e.target.result, "text/xml");
+                    const points = Array.from(xml.querySelectorAll('trkpt')).map(p => [
+                        parseFloat(p.getAttribute('lat')),
+                        parseFloat(p.getAttribute('lon'))
+                    ]).filter(p => !isNaN(p[0]));
+
+                    if (points.length > 1) {
+                        createPolyline(points);
+                        calculateStats(points);
+                        resolve();
+                    } else reject(new Error("No coordinates"));
+                };
+                reader.readAsText(file);
+            });
+        }
+
+        function processFIT(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error("Binary Read Error"));
+                reader.onload = (e) => {
+                    const scToDeg = 180 / Math.pow(2, 31);
+                    try {
+                        const parser = new FitParser({ force: true, mode: 'both' });
+                        parser.parse(e.target.result, (err, data) => {
+                            if (err) return reject(new Error("Format Error"));
+                            const points = (data.records || []).map(r => {
+                                const lat = r.position_lat;
+                                const lon = r.position_long;
+                                return (lat && lon) ? [lat * scToDeg, lon * scToDeg] : null;
+                            }).filter(p => p !== null);
+
+                            if (points.length > 1) {
+                                createPolyline(points);
+                                calculateStats(points);
+                                resolve();
+                            } else reject(new Error("No GPS records"));
+                        });
+                    } catch (x) { reject(new Error("Parser Crash")); }
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        function createPolyline(latlngs) {
+            L.polyline(latlngs, {
+                color: config.color,
+                weight: config.weight,
+                opacity: config.opacity,
+                lineJoin: 'round',
+                smoothFactor: 2.0,
+                interactive: false
+            }).addTo(trackGroup);
+        }
+
+        function calculateStats(points) {
+            stats.count++;
+            let d = 0;
+            for (let i = 1; i < points.length; i++) {
+                d += map.distance(points[i-1], points[i]);
+            }
+            stats.distance += (d / 1000);
+            document.getElementById('fileCount').innerText = `Files: ${stats.count}`;
+            document.getElementById('totalDist').innerText = `Total Distance: ${stats.distance.toFixed(1)} km`;
+        }
+
+        window.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+        window.addEventListener('drop', (e) => { e.preventDefault(); handleImport(e.dataTransfer.files); });
+
+    </script>
+</body>
+</html>
