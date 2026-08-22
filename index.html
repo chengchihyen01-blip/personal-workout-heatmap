@@ -11,8 +11,8 @@
     
     <!-- FIT File Parser Library (loaded as ESM, exposed as window.FitParser) -->
     <script type="module">
-        import FitParser from 'https://cdn.jsdelivr.net/npm/fit-file-parser@1.21.0/+esm';
-        window.FitParser = FitParser;
+        import FitParserModule from 'https://cdn.jsdelivr.net/npm/fit-file-parser@1.21.0/+esm';
+        window.FitParser = FitParserModule.default;
     </script>
 
     <style>
@@ -242,8 +242,11 @@
             }
 
             if (trackGroup.getLayers().length > 0) {
-                map.fitBounds(trackGroup.getBounds(), { padding: [40, 40] });
-                log("Map view synchronized.");
+                requestAnimationFrame(() => {
+                    map.invalidateSize();
+                    map.fitBounds(trackGroup.getBounds(), { padding: [40, 40] });
+                    log("Map view synchronized.");
+                });
             }
         }
 
@@ -273,7 +276,6 @@
                 const reader = new FileReader();
                 reader.onerror = () => reject(new Error("Binary Read Error"));
                 reader.onload = (e) => {
-                    const scToDeg = 180 / Math.pow(2, 31);
                     try {
                         const parser = new FitParser({ force: true, mode: 'both' });
                         parser.parse(e.target.result, (err, data) => {
@@ -281,7 +283,7 @@
                             const points = (data.records || []).map(r => {
                                 const lat = r.position_lat;
                                 const lon = r.position_long;
-                                return (lat && lon) ? [lat * scToDeg, lon * scToDeg] : null;
+                                return (lat != null && lon != null) ? [lat, lon] : null;
                             }).filter(p => p !== null);
 
                             if (points.length > 1) {
