@@ -84,7 +84,8 @@
                 <h2 class="text-2xl font-bold mb-4 italic text-white">Ready to light up the streets?</h2>
                 <p class="text-gray-400 mb-6 leading-relaxed">
                     Import your <strong>.GPX</strong> or <strong>.FIT</strong> activity files.<br>
-                    Drop multiple files here to visualize your history.
+                    Drop multiple files here to visualize your history.<br>
+                    Click any track on the map for its stats.
                 </p>
                 <button onclick="document.getElementById('welcomeOverlay').classList.add('opacity-0', 'pointer-events-none')" class="bg-orange-600 hover:bg-orange-500 text-white px-8 py-3 rounded-xl transition-all font-bold">
                     Get Started
@@ -92,6 +93,15 @@
             </div>
         </div>
         
+        <!-- Activity Detail Panel (Top Left, shown on track click) -->
+        <div id="activityPanel" class="hidden absolute top-6 right-6 z-[1000] bg-gray-800/95 backdrop-blur border border-gray-700 rounded-xl shadow-2xl w-72 max-h-[calc(100vh-120px)] overflow-y-auto">
+            <div class="flex items-start justify-between p-4 border-b border-gray-700 sticky top-0 bg-gray-800/95 backdrop-blur">
+                <h3 id="activityPanelTitle" class="font-bold text-orange-500 pr-2">Activity</h3>
+                <button id="activityPanelClose" class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <div id="activityPanelBody" class="p-4 space-y-1 text-sm"></div>
+        </div>
+
         <!-- Control Panel (Bottom Left) -->
         <div class="absolute bottom-6 left-6 z-[1000] bg-gray-800/95 backdrop-blur border border-gray-700 p-4 rounded-xl shadow-2xl w-64">
             <h3 class="font-bold mb-3 text-orange-500">Style Settings</h3>
@@ -130,6 +140,9 @@
         // Global State
         const config = { color: '#ff4500', weight: 3, opacity: 0.4 };
         let stats = { count: 0, distance: 0 };
+        let tracks = [];
+        let trackIdSeq = 0;
+        let lastMatches = [];
         
         // Initialize Map centered in Amsterdam
         const map = L.map('map', { 
@@ -183,6 +196,9 @@
         function clearTracks() {
             trackGroup.clearLayers();
             stats = { count: 0, distance: 0 };
+            tracks = [];
+            lastMatches = [];
+            hideActivityPanel();
             document.getElementById('fileCount').innerText = 'Files: 0';
             document.getElementById('totalDist').innerText = 'Total Distance: 0.0 km';
             log("Workspace cleared.");
@@ -256,14 +272,20 @@
                 reader.onerror = () => reject(new Error("Read Error"));
                 reader.onload = (e) => {
                     const xml = new DOMParser().parseFromString(e.target.result, "text/xml");
-                    const points = Array.from(xml.querySelectorAll('trkpt')).map(p => [
-                        parseFloat(p.getAttribute('lat')),
-                        parseFloat(p.getAttribute('lon'))
-                    ]).filter(p => !isNaN(p[0]));
+                    const points = [], elevations = [], times = [];
+                    for (const p of xml.querySelectorAll('trkpt')) {
+                        const lat = parseFloat(p.getAttribute('lat'));
+                        const lon = parseFloat(p.getAttribute('lon'));
+                        if (isNaN(lat) || isNaN(lon)) continue;
+                        points.push([lat, lon]);
+                        const eleEl = p.querySelector('ele');
+                        elevations.push(eleEl ? parseFloat(eleEl.textContent) : null);
+                        const timeEl = p.querySelector('time');
+                        times.push(timeEl ? new Date(timeEl.textContent) : null);
+                    }
 
                     if (points.length > 1) {
-                        createPolyline(points);
-                        calculateStats(points);
+                        finalizeTrack({ points, elevations, times, fileName: file.name });
                         resolve();
                     } else reject(new Error("No coordinates"));
                 };
@@ -280,15 +302,18 @@
                         const parser = new FitParser({ force: true, mode: 'both' });
                         parser.parse(e.target.result, (err, data) => {
                             if (err) return reject(new Error("Format Error"));
-                            const points = (data.records || []).map(r => {
-                                const lat = r.position_lat;
-                                const lon = r.position_long;
-                                return (lat != null && lon != null) ? [lat, lon] : null;
-                            }).filter(p => p !== null);
+                            const points = [], elevations = [], times = [];
+                            let fallbackDurationSec = null;
+                            for (const r of (data.records || [])) {
+                                if (r.position_lat == null || r.position_long == null) continue;
+                                points.push([r.position_lat, r.position_long]);
+                                elevations.push(typeof r.altitude === 'number' ? r.altitude : null);
+                                times.push(r.timestamp instanceof Date && !isNaN(r.timestamp) ? r.timestamp : null);
+                                if (typeof r.timer_time === 'number') fallbackDurationSec = r.timer_time;
+                            }
 
                             if (points.length > 1) {
-                                createPolyline(points);
-                                calculateStats(points);
+                                finalizeTrack({ points, elevations, times, fileName: file.name, fallbackDurationSec });
                                 resolve();
                             } else reject(new Error("No GPS records"));
                         });
@@ -298,8 +323,12 @@
             });
         }
 
-        function createPolyline(latlngs) {
-            L.polyline(latlngs, {
+        /**
+         * Builds the polyline + per-activity stats for one imported file,
+         * and folds it into the running totals shown in the header.
+         */
+        function finalizeTrack({ points, elevations, times, fileName, fallbackDurationSec }) {
+            const layer = L.polyline(points, {
                 color: config.color,
                 weight: config.weight,
                 opacity: config.opacity,
@@ -307,21 +336,170 @@
                 smoothFactor: 2.0,
                 interactive: false
             }).addTo(trackGroup);
-        }
 
-        function calculateStats(points) {
-            stats.count++;
-            let d = 0;
-            for (let i = 1; i < points.length; i++) {
-                d += map.distance(points[i-1], points[i]);
+            let distM = 0;
+            for (let i = 1; i < points.length; i++) distM += map.distance(points[i - 1], points[i]);
+            const distanceKm = distM / 1000;
+
+            const validTimes = times.filter(t => t instanceof Date && !isNaN(t));
+            let durationSec = null;
+            if (validTimes.length >= 2) {
+                durationSec = (validTimes[validTimes.length - 1] - validTimes[0]) / 1000;
+            } else if (fallbackDurationSec != null) {
+                durationSec = fallbackDurationSec;
             }
-            stats.distance += (d / 1000);
+
+            const { ascent, descent } = computeElevationGain(elevations);
+            const avgSpeedKmh = (durationSec && durationSec > 0) ? distanceKm / (durationSec / 3600) : null;
+            const avgPaceMinKm = (durationSec && distanceKm > 0) ? (durationSec / 60) / distanceKm : null;
+
+            tracks.push({
+                id: trackIdSeq++,
+                points,
+                bounds: layer.getBounds(),
+                fileName,
+                startTime: validTimes[0] || null,
+                distanceKm, durationSec, avgSpeedKmh, avgPaceMinKm, ascent, descent
+            });
+
+            stats.count++;
+            stats.distance += distanceKm;
             document.getElementById('fileCount').innerText = `Files: ${stats.count}`;
             document.getElementById('totalDist').innerText = `Total Distance: ${stats.distance.toFixed(1)} km`;
         }
 
+        /**
+         * Sums elevation deltas past a noise threshold, since raw GPS/barometric
+         * altitude jitters enough to wildly overstate ascent/descent otherwise.
+         */
+        function computeElevationGain(elevations, thresholdM = 3) {
+            const valid = elevations.filter(e => typeof e === 'number' && !isNaN(e));
+            if (valid.length < 2) return { ascent: null, descent: null };
+            let ascent = 0, descent = 0, baseline = valid[0];
+            for (const e of valid) {
+                const diff = e - baseline;
+                if (diff >= thresholdM) { ascent += diff; baseline = e; }
+                else if (diff <= -thresholdM) { descent += -diff; baseline = e; }
+            }
+            return { ascent: Math.round(ascent), descent: Math.round(descent) };
+        }
+
+        function formatDuration(sec) {
+            if (sec == null) return '—';
+            sec = Math.round(sec);
+            const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+            return h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
+        }
+
+        function formatPace(minPerKm) {
+            if (minPerKm == null || !isFinite(minPerKm)) return '—';
+            const m = Math.floor(minPerKm);
+            const s = Math.round((minPerKm - m) * 60);
+            return `${m}:${String(s).padStart(2, '0')} /km`;
+        }
+
         window.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
         window.addEventListener('drop', (e) => { e.preventDefault(); handleImport(e.dataTransfer.files); });
+
+        /**
+         * Click-to-inspect: tracks render on a single shared canvas (for
+         * performance with thousands of files), so Leaflet's own per-layer
+         * click events aren't available. Instead we hit-test every track's
+         * points against the click in screen space, which also lets us
+         * collect ALL tracks passing through that spot (e.g. the same
+         * street run many times), not just the topmost one.
+         */
+        const HIT_TOLERANCE_PX = 8;
+
+        function pointToSegmentDistance(p, a, b) {
+            let x = a.x, y = a.y, dx = b.x - x, dy = b.y - y;
+            if (dx !== 0 || dy !== 0) {
+                const t = ((p.x - x) * dx + (p.y - y) * dy) / (dx * dx + dy * dy);
+                if (t > 1) { x = b.x; y = b.y; }
+                else if (t > 0) { x += dx * t; y += dy * t; }
+            }
+            dx = p.x - x; dy = p.y - y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        map.on('click', (e) => {
+            const clickPt = map.latLngToContainerPoint(e.latlng);
+            // Cheap geo pre-filter, sized in screen pixels (not meters) so it
+            // stays correct whether the map is zoomed to a street or a country.
+            const clickBounds = L.latLngBounds(
+                map.containerPointToLatLng([clickPt.x - HIT_TOLERANCE_PX, clickPt.y - HIT_TOLERANCE_PX]),
+                map.containerPointToLatLng([clickPt.x + HIT_TOLERANCE_PX, clickPt.y + HIT_TOLERANCE_PX])
+            );
+            const matches = [];
+
+            for (const t of tracks) {
+                if (!t.bounds.intersects(clickBounds)) continue;
+                let hit = false;
+                for (let i = 1; i < t.points.length; i++) {
+                    const p1 = map.latLngToContainerPoint(t.points[i - 1]);
+                    const p2 = map.latLngToContainerPoint(t.points[i]);
+                    if (pointToSegmentDistance(clickPt, p1, p2) <= HIT_TOLERANCE_PX) { hit = true; break; }
+                }
+                if (hit) matches.push(t);
+            }
+
+            if (matches.length === 0) { hideActivityPanel(); return; }
+            matches.sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+            lastMatches = matches;
+            if (matches.length === 1) showActivityDetail(matches[0], false);
+            else showActivityList(matches);
+        });
+
+        function hideActivityPanel() {
+            document.getElementById('activityPanel').classList.add('hidden');
+        }
+
+        function showActivityList(matches) {
+            document.getElementById('activityPanelTitle').innerText = `${matches.length} activities here`;
+            const body = document.getElementById('activityPanelBody');
+            body.innerHTML = matches.map((t, idx) => `
+                <button data-idx="${idx}" class="activity-list-item w-full text-left px-3 py-2 rounded-lg bg-gray-900/60 hover:bg-gray-700 transition-colors mb-1.5">
+                    <div class="font-medium">${t.startTime ? t.startTime.toLocaleDateString() : t.fileName}</div>
+                    <div class="text-xs text-gray-400">${t.distanceKm.toFixed(1)} km · ${formatDuration(t.durationSec)}</div>
+                </button>
+            `).join('');
+            body.querySelectorAll('.activity-list-item').forEach(btn => {
+                btn.addEventListener('click', () => showActivityDetail(matches[parseInt(btn.dataset.idx)], true));
+            });
+            document.getElementById('activityPanel').classList.remove('hidden');
+        }
+
+        function showActivityDetail(track, cameFromList) {
+            document.getElementById('activityPanelTitle').innerText = track.startTime
+                ? track.startTime.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+                : track.fileName;
+
+            const rows = [
+                ['Distance', `${track.distanceKm.toFixed(2)} km`],
+                ['Duration', formatDuration(track.durationSec)],
+                ['Avg Speed', track.avgSpeedKmh != null ? `${track.avgSpeedKmh.toFixed(1)} km/h` : '—'],
+                ['Avg Pace', formatPace(track.avgPaceMinKm)],
+                ['Ascent', track.ascent != null ? `${track.ascent} m` : '—'],
+                ['Descent', track.descent != null ? `${track.descent} m` : '—'],
+            ];
+
+            const backBtn = cameFromList
+                ? `<button id="activityBackBtn" class="text-xs text-orange-500 hover:text-orange-400 mb-2">&larr; Back to list (${lastMatches.length})</button>`
+                : '';
+
+            document.getElementById('activityPanelBody').innerHTML = backBtn + rows.map(([label, val]) => `
+                <div class="flex justify-between border-b border-gray-700/50 py-1.5">
+                    <span class="text-gray-400">${label}</span><span class="font-medium">${val}</span>
+                </div>
+            `).join('') + `<div class="text-[10px] text-gray-500 pt-2 truncate">${track.fileName}</div>`;
+
+            if (cameFromList) {
+                document.getElementById('activityBackBtn').addEventListener('click', () => showActivityList(lastMatches));
+            }
+            document.getElementById('activityPanel').classList.remove('hidden');
+        }
+
+        document.getElementById('activityPanelClose').addEventListener('click', hideActivityPanel);
 
     </script>
 </body>
