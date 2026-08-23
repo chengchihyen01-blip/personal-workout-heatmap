@@ -36,6 +36,21 @@
         .leaflet-interactive {
             filter: drop-shadow(0 0 5px rgba(255, 69, 0, 0.8));
         }
+        /* Chrome that follows the user's chosen track color -- always a
+           brightened ("shinified") variant so it stays legible on the dark
+           UI even if the track color itself is picked very dark. */
+        :root {
+            --accent: #ffb599;
+        }
+        .accent-text {
+            color: var(--accent);
+        }
+        .accent-range {
+            accent-color: var(--accent);
+        }
+        .accent-link:hover {
+            opacity: 0.75;
+        }
         /* Selected-activity highlight: rendered via SVG (unlike the base
            canvas tracks) so it can carry a real glow filter. */
         .route-highlight {
@@ -101,7 +116,7 @@
         <!-- Activity Detail Panel (Top Left, shown on track click) -->
         <div id="activityPanel" class="hidden absolute top-6 right-6 z-[1000] bg-gray-800/95 backdrop-blur border border-gray-700 rounded-xl shadow-2xl w-72 max-h-[calc(100vh-120px)] overflow-y-auto">
             <div class="flex items-start justify-between p-4 border-b border-gray-700 sticky top-0 bg-gray-800/95 backdrop-blur">
-                <h3 id="activityPanelTitle" class="font-bold text-orange-500 pr-2">Activity</h3>
+                <h3 id="activityPanelTitle" class="font-bold accent-text pr-2">Activity</h3>
                 <button id="activityPanelClose" class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
             </div>
             <div id="activityPanelBody" class="p-4 space-y-1 text-sm"></div>
@@ -109,7 +124,7 @@
 
         <!-- Control Panel (Bottom Left) -->
         <div class="absolute bottom-6 left-6 z-[1000] bg-gray-800/95 backdrop-blur border border-gray-700 p-4 rounded-xl shadow-2xl w-64">
-            <h3 class="font-bold mb-3 text-orange-500">Style Settings</h3>
+            <h3 class="font-bold mb-3 accent-text">Style Settings</h3>
             <div class="space-y-4">
                 <div>
                     <label class="text-xs text-gray-400 block mb-1">Track Color</label>
@@ -118,16 +133,16 @@
                 <div>
                     <div class="flex justify-between text-xs text-gray-400 mb-1">
                         <span>Line Weight</span>
-                        <span id="weightVal" class="text-orange-500">3</span>
+                        <span id="weightVal" class="accent-text">3</span>
                     </div>
-                    <input type="range" id="widthSlider" min="1" max="10" value="3" class="w-full accent-orange-500">
+                    <input type="range" id="widthSlider" min="1" max="10" value="3" class="w-full accent-range">
                 </div>
                 <div>
                     <div class="flex justify-between text-xs text-gray-400 mb-1">
                         <span>Opacity</span>
-                        <span id="opacityVal" class="text-orange-500">40%</span>
+                        <span id="opacityVal" class="accent-text">40%</span>
                     </div>
-                    <input type="range" id="opacitySlider" min="5" max="100" value="40" class="w-full accent-orange-500">
+                    <input type="range" id="opacitySlider" min="5" max="100" value="40" class="w-full accent-range">
                 </div>
             </div>
             
@@ -285,6 +300,7 @@
         });
 
         function updateGlobalStyles() {
+            document.documentElement.style.setProperty('--accent', shinify(config.color));
             trackGroup.eachLayer(layer => {
                 if (layer instanceof L.Polyline) {
                     layer.setStyle({ color: config.color, weight: config.weight, opacity: config.opacity });
@@ -294,6 +310,7 @@
                 highlightLayer.setStyle({ color: shinify(config.color), weight: config.weight + 3 });
             }
         }
+        updateGlobalStyles(); // sync UI accent (and CSS default) with initial config.color
 
         /**
          * Zooms to and visually highlights one activity's route (called when
@@ -398,7 +415,6 @@
                         parser.parse(e.target.result, (err, data) => {
                             if (err) return reject(new Error("Format Error"));
                             const points = [], elevations = [], times = [];
-                            let fallbackDurationSec = null;
                             for (const r of (data.records || [])) {
                                 if (r.position_lat == null || r.position_long == null) continue;
                                 points.push([r.position_lat, r.position_long]);
@@ -408,11 +424,16 @@
                                     : typeof r.altitude === 'number' ? r.altitude : null;
                                 elevations.push(alt);
                                 times.push(r.timestamp instanceof Date && !isNaN(r.timestamp) ? r.timestamp : null);
-                                if (typeof r.timer_time === 'number') fallbackDurationSec = r.timer_time;
                             }
+                            // Activity/moving time lives on the session summary message
+                            // (total_timer_time), not per-record -- it excludes auto-paused
+                            // or manually paused stretches, unlike wall-clock elapsed time.
+                            const session = (data.sessions || [])[0];
+                            const timerTimeSec = session && typeof session.total_timer_time === 'number'
+                                ? session.total_timer_time : null;
 
                             if (points.length > 1) {
-                                finalizeTrack({ points, elevations, times, fileName: file.name, fallbackDurationSec });
+                                finalizeTrack({ points, elevations, times, fileName: file.name, timerTimeSec });
                                 resolve();
                             } else reject(new Error("No GPS records"));
                         });
@@ -426,7 +447,7 @@
          * Builds the polyline + per-activity stats for one imported file,
          * and folds it into the running totals shown in the header.
          */
-        function finalizeTrack({ points, elevations, times, fileName, fallbackDurationSec }) {
+        function finalizeTrack({ points, elevations, times, fileName, timerTimeSec }) {
             const layer = L.polyline(points, {
                 color: config.color,
                 weight: config.weight,
@@ -442,10 +463,12 @@
 
             const validTimes = times.filter(t => t instanceof Date && !isNaN(t));
             let durationSec = null;
-            if (validTimes.length >= 2) {
+            if (timerTimeSec != null) {
+                // FIT's timer_time is activity/moving time -- it pauses when the
+                // device auto-pauses or you stop the timer, unlike wall-clock time.
+                durationSec = timerTimeSec;
+            } else if (validTimes.length >= 2) {
                 durationSec = (validTimes[validTimes.length - 1] - validTimes[0]) / 1000;
-            } else if (fallbackDurationSec != null) {
-                durationSec = fallbackDurationSec;
             }
 
             const { ascent, descent } = computeElevationGain(elevations);
@@ -590,7 +613,7 @@
             ];
 
             const backBtn = cameFromList
-                ? `<button id="activityBackBtn" class="text-xs text-orange-500 hover:text-orange-400 mb-2">&larr; Back to list (${lastMatches.length})</button>`
+                ? `<button id="activityBackBtn" class="text-xs accent-text accent-link mb-2">&larr; Back to list (${lastMatches.length})</button>`
                 : '';
 
             document.getElementById('activityPanelBody').innerHTML = backBtn + rows.map(([label, val, id]) => `
