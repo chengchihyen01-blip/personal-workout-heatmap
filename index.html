@@ -179,7 +179,7 @@
         async function reverseGeocodeCity(lat, lon) {
             const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
             if (geocodeCache.has(key)) return geocodeCache.get(key);
-            const promise = fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`)
+            const promise = fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1&accept-language=en`)
                 .then(r => r.json())
                 .then(data => {
                     const a = data.address || {};
