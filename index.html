@@ -150,6 +150,31 @@
         let lastMatches = [];
         let highlightLayer = null;
         const highlightRenderer = L.svg();
+        let currentDetailTrackId = null;
+        const geocodeCache = new Map();
+
+        /**
+         * City-level reverse geocoding via OpenStreetMap's free Nominatim API
+         * (zoom=10 ~ city granularity). This is the one network call in the
+         * app that sends anything beyond map-tile requests -- just the two
+         * endpoint coordinates of whichever activity you open, never a file.
+         * Cached per-session (rounded to ~1km) since the same start/end
+         * point recurs across many activities.
+         */
+        async function reverseGeocodeCity(lat, lon) {
+            const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+            if (geocodeCache.has(key)) return geocodeCache.get(key);
+            const promise = fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`)
+                .then(r => r.json())
+                .then(data => {
+                    const a = data.address || {};
+                    const city = a.city || a.town || a.village || a.municipality || a.county || a.state || null;
+                    return city ? (a.country ? `${city}, ${a.country}` : city) : (data.display_name || 'Unknown');
+                })
+                .catch(() => 'Unavailable');
+            geocodeCache.set(key, promise);
+            return promise;
+        }
 
         /**
          * Brightens/lightens a hex color so a highlighted route stands out
@@ -377,7 +402,11 @@
                             for (const r of (data.records || [])) {
                                 if (r.position_lat == null || r.position_long == null) continue;
                                 points.push([r.position_lat, r.position_long]);
-                                elevations.push(typeof r.altitude === 'number' ? r.altitude : null);
+                                // Newer devices write enhanced_altitude (higher precision) instead
+                                // of the legacy altitude field, sometimes exclusively.
+                                const alt = typeof r.enhanced_altitude === 'number' ? r.enhanced_altitude
+                                    : typeof r.altitude === 'number' ? r.altitude : null;
+                                elevations.push(alt);
                                 times.push(r.timestamp instanceof Date && !isNaN(r.timestamp) ? r.timestamp : null);
                                 if (typeof r.timer_time === 'number') fallbackDurationSec = r.timer_time;
                             }
@@ -523,6 +552,7 @@
         function hideActivityPanel() {
             document.getElementById('activityPanel').classList.add('hidden');
             clearHighlight();
+            currentDetailTrackId = null;
         }
 
         function showActivityList(matches) {
@@ -542,6 +572,7 @@
 
         function showActivityDetail(track, cameFromList) {
             highlightTrack(track);
+            currentDetailTrackId = track.id;
 
             document.getElementById('activityPanelTitle').innerText = track.startTime
                 ? track.startTime.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
@@ -554,15 +585,17 @@
                 ['Avg Pace', formatPace(track.avgPaceMinKm)],
                 ['Ascent', track.ascent != null ? `${track.ascent} m` : '—'],
                 ['Descent', track.descent != null ? `${track.descent} m` : '—'],
+                ['Start', track.startPlace || 'Loading…', 'stat-start'],
+                ['End', track.endPlace || 'Loading…', 'stat-end'],
             ];
 
             const backBtn = cameFromList
                 ? `<button id="activityBackBtn" class="text-xs text-orange-500 hover:text-orange-400 mb-2">&larr; Back to list (${lastMatches.length})</button>`
                 : '';
 
-            document.getElementById('activityPanelBody').innerHTML = backBtn + rows.map(([label, val]) => `
+            document.getElementById('activityPanelBody').innerHTML = backBtn + rows.map(([label, val, id]) => `
                 <div class="flex justify-between border-b border-gray-700/50 py-1.5">
-                    <span class="text-gray-400">${label}</span><span class="font-medium">${val}</span>
+                    <span class="text-gray-400">${label}</span><span class="font-medium text-right pl-3"${id ? ` id="${id}"` : ''}>${val}</span>
                 </div>
             `).join('') + `<div class="text-[10px] text-gray-500 pt-2 truncate">${track.fileName}</div>`;
 
@@ -570,6 +603,31 @@
                 document.getElementById('activityBackBtn').addEventListener('click', () => showActivityList(lastMatches));
             }
             document.getElementById('activityPanel').classList.remove('hidden');
+
+            resolveEndpointPlaces(track);
+        }
+
+        function resolveEndpointPlaces(track) {
+            if (!track.startPlace) {
+                const [lat, lon] = track.points[0];
+                reverseGeocodeCity(lat, lon).then(place => {
+                    track.startPlace = place;
+                    if (currentDetailTrackId === track.id) {
+                        const el = document.getElementById('stat-start');
+                        if (el) el.innerText = place;
+                    }
+                });
+            }
+            if (!track.endPlace) {
+                const [lat, lon] = track.points[track.points.length - 1];
+                reverseGeocodeCity(lat, lon).then(place => {
+                    track.endPlace = place;
+                    if (currentDetailTrackId === track.id) {
+                        const el = document.getElementById('stat-end');
+                        if (el) el.innerText = place;
+                    }
+                });
+            }
         }
 
         document.getElementById('activityPanelClose').addEventListener('click', hideActivityPanel);
