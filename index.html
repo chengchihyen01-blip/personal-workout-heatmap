@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,20 +16,59 @@
     </script>
 
     <style>
+        /* Theme tokens. :root holds the dark-theme (default) values;
+           html[data-theme="light"] overrides them. Component classes below
+           read these vars with !important so they win regardless of the
+           Tailwind CDN's own runtime-injected stylesheet order. */
+        :root {
+            --accent: #ffb599;
+            --bg-page: #111827;
+            --text-page: #f3f4f6;
+            --bg-surface: #1f2937;
+            --bg-surface-95: rgba(31, 41, 55, 0.95);
+            --bg-surface-alt: #111827;
+            --border-base: #374151;
+            --border-divider: rgba(55, 65, 81, 0.5);
+            --text-muted: #9ca3af;
+            --text-dim: #6b7280;
+            --hover-surface: #374151;
+            --scrollbar-track: #1f2937;
+            --scrollbar-thumb: #4b5563;
+            --map-fallback: #0b0e14;
+            --highlight-glow-1: rgba(255, 255, 255, 0.95);
+            --highlight-glow-2: rgba(255, 255, 255, 0.6);
+        }
+        html[data-theme="light"] {
+            --bg-page: #f8fafc;
+            --text-page: #0f172a;
+            --bg-surface: #ffffff;
+            --bg-surface-95: rgba(255, 255, 255, 0.95);
+            --bg-surface-alt: #f1f5f9;
+            --border-base: #e2e8f0;
+            --border-divider: rgba(226, 232, 240, 0.8);
+            --text-muted: #64748b;
+            --text-dim: #94a3b8;
+            --hover-surface: #e2e8f0;
+            --scrollbar-track: #e2e8f0;
+            --scrollbar-thumb: #94a3b8;
+            --map-fallback: #e5e7eb;
+            --highlight-glow-1: rgba(15, 23, 42, 0.85);
+            --highlight-glow-2: rgba(15, 23, 42, 0.45);
+        }
         #map {
             height: calc(100vh - 80px);
             width: 100%;
-            background: #0b0e14;
+            background: var(--map-fallback);
         }
         /* Custom scrollbar for a clean look */
         ::-webkit-scrollbar {
             width: 8px;
         }
         ::-webkit-scrollbar-track {
-            background: #1f2937;
+            background: var(--scrollbar-track);
         }
         ::-webkit-scrollbar-thumb {
-            background: #4b5563;
+            background: var(--scrollbar-thumb);
             border-radius: 4px;
         }
         /* Neon Orange-Red Glow effect for the heat tracks */
@@ -37,13 +76,11 @@
             filter: drop-shadow(0 0 5px rgba(255, 69, 0, 0.8));
         }
         /* Chrome that follows the user's chosen track color -- always a
-           brightened ("shinified") variant so it stays legible on the dark
-           UI even if the track color itself is picked very dark. */
-        :root {
-            --accent: #ffb599;
-        }
+           brightened/darkened ("shinified") variant so it stays legible on
+           whichever theme is active, even if the track color is very dark
+           or very light itself. */
         .accent-text {
-            color: var(--accent);
+            color: var(--accent) !important;
         }
         .accent-range {
             accent-color: var(--accent);
@@ -54,14 +91,37 @@
         /* Selected-activity highlight: rendered via SVG (unlike the base
            canvas tracks) so it can carry a real glow filter. */
         .route-highlight {
-            filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.95)) drop-shadow(0 0 10px rgba(255, 255, 255, 0.6));
+            filter: drop-shadow(0 0 4px var(--highlight-glow-1)) drop-shadow(0 0 10px var(--highlight-glow-2));
+        }
+        /* Theme-aware chrome, composed independently (bg/border/text) so
+           each element only opts into what it actually uses. */
+        .theme-bg { background-color: var(--bg-page) !important; }
+        .theme-text { color: var(--text-page) !important; }
+        .theme-surface { background-color: var(--bg-surface) !important; }
+        .theme-surface-95 { background-color: var(--bg-surface-95) !important; }
+        .theme-surface-alt { background-color: var(--bg-surface-alt) !important; }
+        .theme-border { border-color: var(--border-base) !important; }
+        .theme-divider { border-color: var(--border-divider) !important; }
+        .theme-muted { color: var(--text-muted) !important; }
+        .theme-dim { color: var(--text-dim) !important; }
+        .theme-hover:hover { background-color: var(--hover-surface) !important; }
+        /* Map style picker (Light / Dark / Satellite) */
+        .map-style-btn {
+            background-color: var(--bg-surface-alt);
+            color: var(--text-muted);
+            border: 1px solid var(--border-base);
+        }
+        .map-style-btn.active {
+            background-color: #ea580c;
+            color: #ffffff;
+            border-color: #ea580c;
         }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-100 overflow-hidden font-sans">
+<body class="theme-bg theme-text overflow-hidden font-sans">
 
     <!-- Top Navigation Bar (Orange-Red Theme) -->
-    <header class="h-20 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-6 shadow-xl relative z-[1100]">
+    <header class="h-20 theme-surface theme-border border-b flex items-center justify-between px-6 shadow-xl relative z-[1100]">
         <div class="flex items-center space-x-3">
             <div class="bg-orange-600 p-2 rounded-lg">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -69,18 +129,18 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
             </div>
-            <h1 class="text-xl font-bold tracking-tight">Activity Heatmap <span class="text-sm font-normal text-gray-400 ml-2">Personal Explorer</span></h1>
+            <h1 class="text-xl font-bold tracking-tight">Activity Heatmap <span class="text-sm font-normal theme-muted ml-2">Personal Explorer</span></h1>
         </div>
         
         <div class="flex items-center space-x-4">
             <!-- Stats -->
-            <div id="stats" class="hidden md:flex space-x-4 text-sm bg-gray-900 px-4 py-2 rounded-full border border-gray-700">
+            <div id="stats" class="hidden md:flex space-x-4 text-sm theme-surface-alt px-4 py-2 rounded-full theme-border border">
                 <span id="fileCount">Files: 0</span>
-                <span class="text-gray-600">|</span>
+                <span class="theme-dim">|</span>
                 <span id="totalDist">Total Distance: 0.0 km</span>
             </div>
             <div class="flex space-x-2">
-                <button onclick="clearTracks()" class="text-gray-400 hover:text-white px-3 py-2 text-sm transition-colors font-medium">
+                <button onclick="clearTracks()" class="theme-muted hover:opacity-75 px-3 py-2 text-sm transition-opacity font-medium">
                     Reset
                 </button>
                 <label class="cursor-pointer bg-orange-600 hover:bg-orange-500 text-white px-5 py-2 rounded-full transition-all font-medium shadow-lg flex items-center space-x-2">
@@ -100,9 +160,9 @@
         
         <!-- Welcome Screen Overlay -->
         <div id="welcomeOverlay" class="absolute inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity duration-500">
-            <div class="bg-gray-800 p-8 rounded-2xl border border-gray-700 max-w-md text-center shadow-2xl">
-                <h2 class="text-2xl font-bold mb-4 italic text-white">Ready to light up the streets?</h2>
-                <p class="text-gray-400 mb-6 leading-relaxed">
+            <div class="theme-surface p-8 rounded-2xl theme-border border max-w-md text-center shadow-2xl">
+                <h2 class="text-2xl font-bold mb-4 italic theme-text">Ready to light up the streets?</h2>
+                <p class="theme-muted mb-6 leading-relaxed">
                     Import your <strong>.GPX</strong> or <strong>.FIT</strong> activity files.<br>
                     Drop multiple files here to visualize your history.<br>
                     Click any track on the map for its stats.
@@ -114,40 +174,48 @@
         </div>
         
         <!-- Activity Detail Panel (Top Left, shown on track click) -->
-        <div id="activityPanel" class="hidden absolute top-6 right-6 z-[1000] bg-gray-800/95 backdrop-blur border border-gray-700 rounded-xl shadow-2xl w-72 max-h-[calc(100vh-120px)] overflow-y-auto">
-            <div class="flex items-start justify-between p-4 border-b border-gray-700 sticky top-0 bg-gray-800/95 backdrop-blur">
+        <div id="activityPanel" class="hidden absolute top-6 right-6 z-[1000] theme-surface-95 backdrop-blur theme-border border rounded-xl shadow-2xl w-72 max-h-[calc(100vh-120px)] overflow-y-auto">
+            <div class="flex items-start justify-between p-4 theme-border border-b sticky top-0 theme-surface-95 backdrop-blur">
                 <h3 id="activityPanelTitle" class="font-bold accent-text pr-2">Activity</h3>
-                <button id="activityPanelClose" class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+                <button id="activityPanelClose" class="theme-muted hover:opacity-75 text-xl leading-none">&times;</button>
             </div>
             <div id="activityPanelBody" class="p-4 space-y-1 text-sm"></div>
         </div>
 
         <!-- Control Panel (Bottom Left) -->
-        <div class="absolute bottom-6 left-6 z-[1000] bg-gray-800/95 backdrop-blur border border-gray-700 p-4 rounded-xl shadow-2xl w-64">
+        <div class="absolute bottom-6 left-6 z-[1000] theme-surface-95 backdrop-blur theme-border border p-4 rounded-xl shadow-2xl w-64">
             <h3 class="font-bold mb-3 accent-text">Style Settings</h3>
             <div class="space-y-4">
                 <div>
-                    <label class="text-xs text-gray-400 block mb-1">Track Color</label>
+                    <label class="text-xs theme-muted block mb-1">Map Style</label>
+                    <div class="grid grid-cols-3 gap-1">
+                        <button data-style="light" class="map-style-btn px-2 py-1.5 rounded-lg text-xs font-medium transition-colors">Light</button>
+                        <button data-style="dark" class="map-style-btn px-2 py-1.5 rounded-lg text-xs font-medium transition-colors">Dark</button>
+                        <button data-style="satellite" class="map-style-btn px-2 py-1.5 rounded-lg text-xs font-medium transition-colors">Satellite</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs theme-muted block mb-1">Track Color</label>
                     <input type="color" id="colorPicker" value="#ff4500" class="w-full h-8 bg-transparent border-none cursor-pointer rounded">
                 </div>
                 <div>
-                    <div class="flex justify-between text-xs text-gray-400 mb-1">
+                    <div class="flex justify-between text-xs theme-muted mb-1">
                         <span>Line Weight</span>
                         <span id="weightVal" class="accent-text">3</span>
                     </div>
                     <input type="range" id="widthSlider" min="1" max="10" value="3" class="w-full accent-range">
                 </div>
                 <div>
-                    <div class="flex justify-between text-xs text-gray-400 mb-1">
+                    <div class="flex justify-between text-xs theme-muted mb-1">
                         <span>Opacity</span>
                         <span id="opacityVal" class="accent-text">40%</span>
                     </div>
                     <input type="range" id="opacitySlider" min="5" max="100" value="40" class="w-full accent-range">
                 </div>
             </div>
-            
+
             <!-- System Status Log -->
-            <div id="log" class="mt-4 pt-4 border-t border-gray-700 text-[10px] text-gray-500 max-h-32 overflow-y-auto font-mono">
+            <div id="log" class="mt-4 pt-4 theme-border border-t text-[10px] theme-dim max-h-32 overflow-y-auto font-mono">
                 System: Initializing...
             </div>
         </div>
@@ -167,6 +235,10 @@
         const highlightRenderer = L.svg();
         let currentDetailTrackId = null;
         const geocodeCache = new Map();
+        // 'light' | 'dark' | 'satellite'. Light is the only style with a light
+        // UI theme; dark and satellite both use the dark chrome.
+        let mapStyle = localStorage.getItem('mapStyle') || 'dark';
+        document.documentElement.setAttribute('data-theme', mapStyle === 'light' ? 'light' : 'dark');
 
         /**
          * City-level reverse geocoding via OpenStreetMap's free Nominatim API
@@ -192,10 +264,12 @@
         }
 
         /**
-         * Brightens/lightens a hex color so a highlighted route stands out
-         * from the base track color, whatever that color currently is.
+         * Brightens (dark theme) or darkens (light theme) a hex color so a
+         * highlighted route / UI accent stays legible against whichever
+         * background is currently active, whatever the base color is.
          */
         function shinify(hex) {
+            const isLight = mapStyle === 'light';
             const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
             const max = Math.max(r, g, b), min = Math.min(r, g, b);
             let h = 0, s = 0, l = (max + min) / 2;
@@ -207,8 +281,13 @@
                 else h = (r - g) / d + 4;
                 h /= 6;
             }
-            s = Math.min(1, s + 0.15);
-            l = Math.min(0.88, l + 0.3);
+            if (isLight) {
+                s = Math.min(1, s + 0.25);
+                l = Math.max(0.28, l - 0.12);
+            } else {
+                s = Math.min(1, s + 0.15);
+                l = Math.min(0.88, l + 0.3);
+            }
             const hue2rgb = (p, q, t) => {
                 if (t < 0) t += 1;
                 if (t > 1) t -= 1;
@@ -231,12 +310,46 @@
         
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-        // Dark theme tiles (CARTO now requires a free API key -- see carto.com/basemaps/apikey)
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2iln_1_734002cfaa312eb627798557', {
-            attribution: '&copy; CARTO & OSM',
-            subdomains: 'abcd',
-            maxZoom: 20
-        }).addTo(map);
+        // Map style tiles. CARTO requires a free API key now (see
+        // carto.com/basemaps/apikey); satellite is a separate, keyless
+        // provider so it never touches the CARTO quota.
+        const CARTO_KEY = 'cb1_2iln_1_734002cfaa312eb627798557';
+        const TILE_LAYER_FACTORIES = {
+            dark: () => L.tileLayer(`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${CARTO_KEY}`, {
+                attribution: '&copy; CARTO & OSM', subdomains: 'abcd', maxZoom: 20
+            }),
+            light: () => L.tileLayer(`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${CARTO_KEY}`, {
+                attribution: '&copy; CARTO & OSM', subdomains: 'abcd', maxZoom: 20
+            }),
+            satellite: () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri', maxZoom: 20, maxNativeZoom: 19
+            })
+        };
+        let activeTileLayer = null;
+
+        /**
+         * Switches the basemap and, for 'light' specifically, the whole UI
+         * theme (satellite keeps whatever chrome -- light or dark -- was
+         * already active, since satellite imagery isn't itself a "theme").
+         */
+        function applyMapStyle(style, { persist = true } = {}) {
+            mapStyle = style;
+            document.documentElement.setAttribute('data-theme', style === 'light' ? 'light' : 'dark');
+
+            if (activeTileLayer) map.removeLayer(activeTileLayer);
+            activeTileLayer = TILE_LAYER_FACTORIES[style]().addTo(map);
+
+            document.querySelectorAll('.map-style-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.style === style);
+            });
+
+            updateGlobalStyles();
+            if (persist) localStorage.setItem('mapStyle', style);
+        }
+
+        document.querySelectorAll('.map-style-btn').forEach(btn => {
+            btn.addEventListener('click', () => applyMapStyle(btn.dataset.style));
+        });
 
         const trackGroup = L.featureGroup().addTo(map);
 
@@ -310,7 +423,7 @@
                 highlightLayer.setStyle({ color: shinify(config.color), weight: config.weight + 3 });
             }
         }
-        updateGlobalStyles(); // sync UI accent (and CSS default) with initial config.color
+        applyMapStyle(mapStyle, { persist: false }); // sets initial tile layer, button state, and --accent
 
         /**
          * Zooms to and visually highlights one activity's route (called when
@@ -582,9 +695,9 @@
             document.getElementById('activityPanelTitle').innerText = `${matches.length} activities here`;
             const body = document.getElementById('activityPanelBody');
             body.innerHTML = matches.map((t, idx) => `
-                <button data-idx="${idx}" class="activity-list-item w-full text-left px-3 py-2 rounded-lg bg-gray-900/60 hover:bg-gray-700 transition-colors mb-1.5">
+                <button data-idx="${idx}" class="activity-list-item w-full text-left px-3 py-2 rounded-lg theme-surface-alt theme-hover transition-colors mb-1.5">
                     <div class="font-medium">${t.startTime ? t.startTime.toLocaleDateString() : t.fileName}</div>
-                    <div class="text-xs text-gray-400">${t.distanceKm.toFixed(1)} km · ${formatDuration(t.durationSec)}</div>
+                    <div class="text-xs theme-muted">${t.distanceKm.toFixed(1)} km · ${formatDuration(t.durationSec)}</div>
                 </button>
             `).join('');
             body.querySelectorAll('.activity-list-item').forEach(btn => {
@@ -617,10 +730,10 @@
                 : '';
 
             document.getElementById('activityPanelBody').innerHTML = backBtn + rows.map(([label, val, id]) => `
-                <div class="flex justify-between border-b border-gray-700/50 py-1.5">
-                    <span class="text-gray-400">${label}</span><span class="font-medium text-right pl-3"${id ? ` id="${id}"` : ''}>${val}</span>
+                <div class="flex justify-between theme-divider border-b py-1.5">
+                    <span class="theme-muted">${label}</span><span class="font-medium text-right pl-3"${id ? ` id="${id}"` : ''}>${val}</span>
                 </div>
-            `).join('') + `<div class="text-[10px] text-gray-500 pt-2 truncate">${track.fileName}</div>`;
+            `).join('') + `<div class="text-[10px] theme-dim pt-2 truncate">${track.fileName}</div>`;
 
             if (cameFromList) {
                 document.getElementById('activityBackBtn').addEventListener('click', () => showActivityList(lastMatches));
