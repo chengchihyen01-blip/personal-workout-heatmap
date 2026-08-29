@@ -390,6 +390,39 @@
 
         const trackGroup = L.featureGroup().addTo(map);
 
+        // Defensive fix for a known class of Leaflet Canvas-renderer bug:
+        // after a very large jump (e.g. panning across the globe and back),
+        // some vector layers can silently fail to redraw even though the
+        // data is still there -- the file count stays correct, but nothing
+        // is painted. Confirmed by reproducing it directly: the layers were
+        // present and in-bounds, just never repainted, and calling
+        // .redraw() on them fixed it instantly.
+        //
+        // Checked per-step (not start-vs-end of a whole gesture) because a
+        // round trip like Taiwan -> Europe -> Taiwan has ~zero *net*
+        // displacement even though a large jump happened along the way.
+        // The actual (non-trivial) redraw is deferred until movement
+        // settles, so a burst of intermediate steps only pays for it once.
+        let lastMapCenter = map.getCenter();
+        let bigJumpPending = false;
+        let settleTimer = null;
+        map.on('moveend', () => {
+            const newCenter = map.getCenter();
+            if (map.distance(lastMapCenter, newCenter) > 500000) bigJumpPending = true;
+            lastMapCenter = newCenter;
+            clearTimeout(settleTimer);
+            settleTimer = setTimeout(() => {
+                if (bigJumpPending) {
+                    map.invalidateSize({ pan: false });
+                    requestAnimationFrame(() => {
+                        trackGroup.eachLayer(layer => layer.redraw());
+                        if (highlightLayer) highlightLayer.redraw();
+                    });
+                    bigJumpPending = false;
+                }
+            }, 400);
+        });
+
         /**
          * Logs status messages to the UI console
          */
@@ -480,7 +513,9 @@
                 className: 'route-highlight'
             }).addTo(map);
             highlightLayer.bringToFront();
-            map.fitBounds(track.bounds, { padding: [60, 60], maxZoom: 16 });
+            if (track.bounds.isValid()) {
+                map.fitBounds(track.bounds, { padding: [60, 60], maxZoom: 16 });
+            }
         }
 
         function clearHighlight() {
@@ -519,7 +554,7 @@
                 }
             }
 
-            if (trackGroup.getLayers().length > 0) {
+            if (trackGroup.getLayers().length > 0 && trackGroup.getBounds().isValid()) {
                 requestAnimationFrame(() => {
                     map.invalidateSize();
                     map.fitBounds(trackGroup.getBounds(), { padding: [40, 40] });
