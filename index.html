@@ -325,6 +325,14 @@
                 attribution: 'Tiles &copy; Esri', maxZoom: 20, maxNativeZoom: 19
             })
         };
+        // Satellite imagery alone has no place names -- this is a transparent
+        // label/boundary overlay drawn on top of it, same keyless Esri account.
+        const satelliteLabelsLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Labels &copy; Esri', maxZoom: 20, maxNativeZoom: 19
+            // default tilePane (z-index 200): sits above the imagery tiles
+            // (same pane, added after) but stays below tracks/highlight
+            // (overlayPane, z-index 400).
+        });
         let activeTileLayer = null;
 
         /**
@@ -338,6 +346,9 @@
 
             if (activeTileLayer) map.removeLayer(activeTileLayer);
             activeTileLayer = TILE_LAYER_FACTORIES[style]().addTo(map);
+
+            if (style === 'satellite') satelliteLabelsLayer.addTo(map);
+            else map.removeLayer(satelliteLabelsLayer);
 
             document.querySelectorAll('.map-style-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.style === style);
@@ -644,7 +655,14 @@
          * collect ALL tracks passing through that spot (e.g. the same
          * street run many times), not just the topmost one.
          */
-        const HIT_TOLERANCE_PX = 8;
+        // Scales with the current line weight so the clickable zone roughly
+        // matches how wide the track actually looks -- a flat tolerance felt
+        // "unclickable" on lines drawn thicker than the default, and even at
+        // default weight was tight enough that a visually-centered click
+        // could land just outside it.
+        function hitTolerancePx() {
+            return config.weight + 8;
+        }
 
         function pointToSegmentDistance(p, a, b) {
             let x = a.x, y = a.y, dx = b.x - x, dy = b.y - y;
@@ -658,12 +676,13 @@
         }
 
         map.on('click', (e) => {
+            const tolerance = hitTolerancePx();
             const clickPt = map.latLngToContainerPoint(e.latlng);
             // Cheap geo pre-filter, sized in screen pixels (not meters) so it
             // stays correct whether the map is zoomed to a street or a country.
             const clickBounds = L.latLngBounds(
-                map.containerPointToLatLng([clickPt.x - HIT_TOLERANCE_PX, clickPt.y - HIT_TOLERANCE_PX]),
-                map.containerPointToLatLng([clickPt.x + HIT_TOLERANCE_PX, clickPt.y + HIT_TOLERANCE_PX])
+                map.containerPointToLatLng([clickPt.x - tolerance, clickPt.y - tolerance]),
+                map.containerPointToLatLng([clickPt.x + tolerance, clickPt.y + tolerance])
             );
             const matches = [];
 
@@ -673,7 +692,7 @@
                 for (let i = 1; i < t.points.length; i++) {
                     const p1 = map.latLngToContainerPoint(t.points[i - 1]);
                     const p2 = map.latLngToContainerPoint(t.points[i]);
-                    if (pointToSegmentDistance(clickPt, p1, p2) <= HIT_TOLERANCE_PX) { hit = true; break; }
+                    if (pointToSegmentDistance(clickPt, p1, p2) <= tolerance) { hit = true; break; }
                 }
                 if (hit) matches.push(t);
             }
