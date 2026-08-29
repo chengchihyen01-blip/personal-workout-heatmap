@@ -56,9 +56,14 @@
             --highlight-glow-2: rgba(15, 23, 42, 0.45);
         }
         #map {
-            height: calc(100vh - 80px);
+            height: calc(100vh - 56px); /* matches header's h-14 on mobile */
             width: 100%;
             background: var(--map-fallback);
+        }
+        @media (min-width: 640px) {
+            #map {
+                height: calc(100vh - 80px); /* matches header's h-20 from sm: up */
+            }
         }
         /* Custom scrollbar for a clean look */
         ::-webkit-scrollbar {
@@ -146,33 +151,42 @@
 <body class="theme-bg theme-text overflow-hidden font-sans">
 
     <!-- Top Navigation Bar (Orange-Red Theme) -->
-    <header class="h-20 theme-surface theme-border border-b flex items-center justify-between px-6 shadow-xl relative z-[1100]">
-        <div class="flex items-center space-x-3">
-            <div class="bg-orange-600 p-2 rounded-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <header class="h-14 sm:h-20 theme-surface theme-border border-b flex items-center justify-between px-3 sm:px-6 shadow-xl relative z-[1100]">
+        <div class="flex items-center space-x-2 sm:space-x-3 min-w-0">
+            <div class="bg-orange-600 p-1.5 sm:p-2 rounded-lg shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 sm:h-6 sm:w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
             </div>
-            <h1 class="text-xl font-bold tracking-tight">Activity Heatmap <span class="text-sm font-normal theme-muted ml-2">Personal Explorer</span></h1>
+            <h1 class="text-base sm:text-xl font-bold tracking-tight truncate">Activity Heatmap <span class="hidden sm:inline text-sm font-normal theme-muted ml-2">Personal Explorer</span></h1>
         </div>
-        
-        <div class="flex items-center space-x-4">
+
+        <div class="flex items-center space-x-2 sm:space-x-4 shrink-0">
             <!-- Stats -->
             <div id="stats" class="hidden md:flex space-x-4 text-sm theme-surface-alt px-4 py-2 rounded-full theme-border border">
                 <span id="fileCount">Files: 0</span>
                 <span class="theme-dim">|</span>
                 <span id="totalDist">Total Distance: 0.0 km</span>
             </div>
-            <div class="flex space-x-2">
-                <button onclick="clearTracks()" class="theme-muted hover:opacity-75 px-3 py-2 text-sm transition-opacity font-medium">
+            <!-- Mobile-only: toggles the Search/Filter/Style panel, which is
+                 collapsed by default on small screens so the map isn't
+                 immediately buried under it. -->
+            <button id="controlPanelToggle" class="sm:hidden theme-muted hover:opacity-75 p-2 transition-opacity" aria-label="Toggle panel">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+            </button>
+            <div class="flex space-x-1 sm:space-x-2">
+                <button onclick="clearTracks()" class="theme-muted hover:opacity-75 px-2 sm:px-3 py-2 text-sm transition-opacity font-medium">
                     Reset
                 </button>
-                <label class="cursor-pointer bg-orange-600 hover:bg-orange-500 text-white px-5 py-2 rounded-full transition-all font-medium shadow-lg flex items-center space-x-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <label class="cursor-pointer bg-orange-600 hover:bg-orange-500 text-white px-3 sm:px-5 py-2 rounded-full transition-all font-medium shadow-lg flex items-center space-x-2 whitespace-nowrap">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                     </svg>
-                    <span>Import Workout Files (GPX/FIT)</span>
+                    <span class="hidden sm:inline">Import Workout Files (GPX/FIT)</span>
+                    <span class="sm:hidden">Import</span>
                     <input type="file" id="mainInput" class="hidden" multiple accept=".gpx,.fit,.csv">
                 </label>
             </div>
@@ -184,9 +198,9 @@
         <div id="map"></div>
         
         <!-- Welcome Screen Overlay -->
-        <div id="welcomeOverlay" class="absolute inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity duration-500">
-            <div class="theme-surface p-8 rounded-2xl theme-border border max-w-md text-center shadow-2xl">
-                <h2 class="text-2xl font-bold mb-4 italic theme-text">Ready to light up the streets?</h2>
+        <div id="welcomeOverlay" class="absolute inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity duration-500 px-4">
+            <div class="theme-surface p-6 sm:p-8 rounded-2xl theme-border border w-full max-w-md text-center shadow-2xl">
+                <h2 class="text-xl sm:text-2xl font-bold mb-4 italic theme-text">Ready to light up the streets?</h2>
                 <p class="theme-muted mb-6 leading-relaxed">
                     Import your <strong>.GPX</strong> or <strong>.FIT</strong> activity files.<br>
                     Drop multiple files here to visualize your history.<br>
@@ -199,7 +213,7 @@
         </div>
         
         <!-- Activity Detail Panel (Top Right, shown on track click) -->
-        <div id="activityPanel" class="hidden absolute top-6 right-6 z-[1000] theme-surface-95 backdrop-blur theme-border border rounded-xl shadow-2xl w-72 max-h-[calc(100vh-120px)] overflow-y-auto">
+        <div id="activityPanel" class="hidden absolute top-3 left-3 right-3 sm:top-6 sm:left-auto sm:right-6 sm:w-72 z-[1000] theme-surface-95 backdrop-blur theme-border border rounded-xl shadow-2xl max-h-[calc(100vh-90px)] sm:max-h-[calc(100vh-120px)] overflow-y-auto">
             <div class="flex items-start justify-between p-4 theme-border border-b sticky top-0 theme-surface-95 backdrop-blur">
                 <h3 id="activityPanelTitle" class="font-bold accent-text pr-2">Activity</h3>
                 <button id="activityPanelClose" class="theme-muted hover:opacity-75 text-xl leading-none">&times;</button>
@@ -207,8 +221,11 @@
             <div id="activityPanelBody" class="p-4 space-y-1 text-sm"></div>
         </div>
 
-        <!-- Control Panel (Top Left): Search & Filter, then Style Settings, one card -->
-        <div class="absolute top-6 left-6 z-[1000] theme-surface-95 backdrop-blur theme-border border rounded-xl shadow-2xl w-72 max-h-[calc(100vh-48px)] overflow-y-auto">
+        <!-- Control Panel (Top Left): Search & Filter, then Style Settings, one card.
+             Collapsed by default on mobile (toggled via #controlPanelToggle in the
+             header) so the map is visible first; always shown from sm: up regardless
+             of that toggle state. -->
+        <div id="controlPanel" class="hidden sm:block absolute top-3 left-3 right-3 sm:top-6 sm:left-6 sm:right-auto z-[1000] theme-surface-95 backdrop-blur theme-border border rounded-xl shadow-2xl sm:w-72 max-h-[calc(100vh-72px)] sm:max-h-[calc(100vh-48px)] overflow-y-auto">
             <div class="p-4">
                 <h3 class="font-bold mb-3 accent-text">Search & Filter</h3>
                 <div class="space-y-4">
@@ -886,6 +903,23 @@
 
         window.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
         window.addEventListener('drop', (e) => { e.preventDefault(); handleImport(e.dataTransfer.files); });
+
+        // Mobile-only panel toggle. #controlPanel is "hidden sm:block" in the
+        // markup, so this classList.toggle only has any visible effect below
+        // the sm breakpoint -- sm:block already forces it open on desktop
+        // regardless of this state.
+        document.getElementById('controlPanelToggle').addEventListener('click', () => {
+            document.getElementById('controlPanel').classList.toggle('hidden');
+        });
+
+        // The header's height (and so the map's calc(100vh - Npx) height)
+        // changes at the sm breakpoint -- e.g. rotating a phone or resizing
+        // across it -- so Leaflet needs to be told the container resized.
+        let resizeTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => map.invalidateSize(), 150);
+        });
 
         /**
          * Rebuilds the "All" + one-pill-per-type filter row from whatever
