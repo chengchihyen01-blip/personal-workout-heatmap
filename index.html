@@ -198,11 +198,10 @@
             <div class="space-y-4">
                 <div>
                     <label class="text-xs theme-muted block mb-1">Location or workout title</label>
-                    <div class="flex space-x-1">
-                        <input type="text" id="searchInput" placeholder="e.g. Argentina, or a title" class="search-input flex-1 min-w-0 rounded-lg px-2 py-1.5 text-sm">
-                        <button id="searchBtn" class="bg-orange-600 hover:bg-orange-500 text-white px-3 rounded-lg text-sm font-medium transition-colors">Go</button>
+                    <div class="grid grid-cols-2 gap-1">
+                        <input type="text" id="searchInput" placeholder="Location, or a workout title" class="search-input w-full min-w-0 rounded-lg px-2 py-1.5 text-sm">
+                        <button id="searchBtn" class="w-full bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-sm font-medium transition-colors">Go</button>
                     </div>
-                    <p class="text-[10px] theme-dim mt-1">Titles need an imported <code>activities.csv</code>.</p>
                 </div>
                 <div>
                     <label class="text-xs theme-muted block mb-1">Workout Type</label>
@@ -897,8 +896,37 @@
                 </button>
             `).join('');
             group.querySelectorAll('.type-filter-btn').forEach(btn => {
-                btn.addEventListener('click', () => applyTypeFilter(btn.dataset.type));
+                btn.addEventListener('click', () => {
+                    // Clicking the already-active type a second time clears it
+                    // back to "All" instead of being a no-op.
+                    const next = (btn.dataset.type === activeTypeFilter && btn.dataset.type !== 'all') ? 'all' : btn.dataset.type;
+                    applyTypeFilter(next);
+                });
             });
+        }
+
+        /**
+         * Coarse grid clustering (round each track's center to the nearest
+         * degree, ~111km cells) to find where a given set of tracks is most
+         * concentrated -- good enough for "jump to the busiest area", not
+         * meant to be a precise clustering algorithm.
+         */
+        function findDenseClusterBounds(list) {
+            if (!list.length) return null;
+            const cells = new Map();
+            for (const t of list) {
+                const c = t.bounds.getCenter();
+                const key = `${Math.round(c.lat)},${Math.round(c.lng)}`;
+                if (!cells.has(key)) cells.set(key, []);
+                cells.get(key).push(t);
+            }
+            let best = null;
+            for (const group of cells.values()) {
+                if (!best || group.length > best.length) best = group;
+            }
+            const bounds = L.latLngBounds(best[0].bounds.getSouthWest(), best[0].bounds.getNorthEast());
+            for (let i = 1; i < best.length; i++) bounds.extend(best[i].bounds);
+            return bounds;
         }
 
         /**
@@ -908,6 +936,7 @@
          */
         function applyTypeFilter(type) {
             activeTypeFilter = type;
+            const visibleTracks = [];
             tracks.forEach(t => {
                 const shouldShow = type === 'all' || t.activityType === type;
                 const isShown = trackGroup.hasLayer(t.layer);
@@ -917,10 +946,26 @@
                 } else if (!shouldShow && isShown) {
                     trackGroup.removeLayer(t.layer);
                 }
+                if (shouldShow) visibleTracks.push(t);
             });
             document.querySelectorAll('.type-filter-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.type === type);
             });
+
+            // If nothing of this type is anywhere near the current view,
+            // jump to wherever it's most concentrated instead of leaving an
+            // empty-looking map.
+            if (type !== 'all' && visibleTracks.length > 0) {
+                const mapBounds = map.getBounds();
+                const anyInView = visibleTracks.some(t => t.bounds.intersects(mapBounds));
+                if (!anyInView) {
+                    const clusterBounds = findDenseClusterBounds(visibleTracks);
+                    if (clusterBounds && clusterBounds.isValid()) {
+                        map.fitBounds(clusterBounds, { padding: [60, 60], maxZoom: 14 });
+                        log(`Jumped to where most "${humanizeType(type)}" activities are.`);
+                    }
+                }
+            }
         }
 
         /**
