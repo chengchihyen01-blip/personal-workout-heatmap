@@ -116,6 +116,25 @@
             color: #ffffff;
             border-color: #ea580c;
         }
+        /* Workout type filter pills */
+        .type-filter-btn {
+            background-color: var(--bg-surface-alt);
+            color: var(--text-muted);
+            border: 1px solid var(--border-base);
+        }
+        .type-filter-btn.active {
+            background-color: #ea580c;
+            color: #ffffff;
+            border-color: #ea580c;
+        }
+        .search-input {
+            background-color: var(--bg-surface-alt);
+            color: var(--text-page);
+            border: 1px solid var(--border-base);
+        }
+        .search-input::placeholder {
+            color: var(--text-dim);
+        }
     </style>
 </head>
 <body class="theme-bg theme-text overflow-hidden font-sans">
@@ -148,7 +167,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                     </svg>
                     <span>Import GPX</span>
-                    <input type="file" id="mainInput" class="hidden" multiple accept=".gpx,.fit">
+                    <input type="file" id="mainInput" class="hidden" multiple accept=".gpx,.fit,.csv">
                 </label>
             </div>
         </div>
@@ -173,6 +192,27 @@
             </div>
         </div>
         
+        <!-- Search & Filter Panel (Top Left) -->
+        <div class="absolute top-6 left-6 z-[1000] theme-surface-95 backdrop-blur theme-border border p-4 rounded-xl shadow-2xl w-72">
+            <h3 class="font-bold mb-3 accent-text">Search & Filter</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs theme-muted block mb-1">Location or workout title</label>
+                    <div class="flex space-x-1">
+                        <input type="text" id="searchInput" placeholder="e.g. Argentina, or a title" class="search-input flex-1 min-w-0 rounded-lg px-2 py-1.5 text-sm">
+                        <button id="searchBtn" class="bg-orange-600 hover:bg-orange-500 text-white px-3 rounded-lg text-sm font-medium transition-colors">Go</button>
+                    </div>
+                    <p class="text-[10px] theme-dim mt-1">Titles need an imported <code>activities.csv</code>.</p>
+                </div>
+                <div>
+                    <label class="text-xs theme-muted block mb-1">Workout Type</label>
+                    <div id="typeFilterGroup" class="flex flex-wrap gap-1">
+                        <button data-type="all" class="type-filter-btn active px-2 py-1 rounded-lg text-xs font-medium transition-colors">All</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Activity Detail Panel (Top Left, shown on track click) -->
         <div id="activityPanel" class="hidden absolute top-6 right-6 z-[1000] theme-surface-95 backdrop-blur theme-border border rounded-xl shadow-2xl w-72 max-h-[calc(100vh-120px)] overflow-y-auto">
             <div class="flex items-start justify-between p-4 theme-border border-b sticky top-0 theme-surface-95 backdrop-blur">
@@ -239,6 +279,61 @@
         // UI theme; dark and satellite both use the dark chrome.
         let mapStyle = localStorage.getItem('mapStyle') || 'dark';
         document.documentElement.setAttribute('data-theme', mapStyle === 'light' ? 'light' : 'dark');
+        // Activity ID (from filename, e.g. "20974476509.fit") -> {title, description, type},
+        // populated by importing Strava's own activities.csv alongside the raw files.
+        const activityMetadata = new Map();
+        let activeTypeFilter = 'all';
+
+        function extractActivityId(fileName) {
+            const m = fileName.match(/^(\d+)\.(fit|gpx)$/i);
+            return m ? m[1] : null;
+        }
+
+        /**
+         * Turns a raw type string (Strava's "VirtualRide"/"WeightTraining" or
+         * FIT's "road_biking") into a readable label for the filter pills.
+         */
+        function humanizeType(type) {
+            if (!type) return 'Unknown';
+            return type
+                .replace(/_/g, ' ')
+                .replace(/([a-z])([A-Z])/g, '$1 $2')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        /**
+         * Minimal RFC4180-ish CSV parser (handles quoted fields, embedded
+         * commas, escaped "" quotes) -- Strava's activity titles/descriptions
+         * routinely contain commas and emoji, so a naive split(',') breaks.
+         */
+        function parseCSV(text) {
+            const rows = [];
+            let row = [], field = '', inQuotes = false;
+            for (let i = 0; i < text.length; i++) {
+                const c = text[i];
+                if (inQuotes) {
+                    if (c === '"') {
+                        if (text[i + 1] === '"') { field += '"'; i++; }
+                        else inQuotes = false;
+                    } else field += c;
+                } else if (c === '"') {
+                    inQuotes = true;
+                } else if (c === ',') {
+                    row.push(field); field = '';
+                } else if (c === '\n' || c === '\r') {
+                    if (c === '\r' && text[i + 1] === '\n') i++;
+                    row.push(field); field = '';
+                    if (row.length > 1 || row[0] !== '') rows.push(row);
+                    row = [];
+                } else {
+                    field += c;
+                }
+            }
+            if (field !== '' || row.length) { row.push(field); rows.push(row); }
+            return rows;
+        }
 
         /**
          * City-level reverse geocoding via OpenStreetMap's free Nominatim API
@@ -460,9 +555,12 @@
             stats = { count: 0, distance: 0 };
             tracks = [];
             lastMatches = [];
+            activityMetadata.clear();
+            activeTypeFilter = 'all';
             hideActivityPanel();
             document.getElementById('fileCount').innerText = 'Files: 0';
             document.getElementById('totalDist').innerText = 'Total Distance: 0.0 km';
+            renderTypeFilter();
             log("Workspace cleared.");
         }
 
@@ -549,10 +647,14 @@
                 try {
                     if (name.endsWith('.gpx')) await processGPX(file);
                     else if (name.endsWith('.fit')) await processFIT(file);
+                    else if (name.endsWith('.csv')) await processCSV(file);
                 } catch (err) {
                     log(`Fail: ${file.name.substring(0, 15)}... ${err.message}`, true);
                 }
             }
+
+            renderTypeFilter();
+            applyTypeFilter(activeTypeFilter); // newly-imported tracks respect whatever filter is already active
 
             if (trackGroup.getLayers().length > 0 && trackGroup.getBounds().isValid()) {
                 requestAnimationFrame(() => {
@@ -561,6 +663,57 @@
                     log("Map view synchronized.");
                 });
             }
+        }
+
+        /**
+         * Strava's own activities.csv -- gives per-activity title,
+         * description, and type by Activity ID, matched against imported
+         * files by filename (e.g. "20974476509.fit"). Retroactively
+         * backfills tracks already imported before this CSV was dropped in,
+         * so import order doesn't matter.
+         */
+        function processCSV(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error("Read Error"));
+                reader.onload = (e) => {
+                    const rows = parseCSV(e.target.result);
+                    if (rows.length < 2) return reject(new Error("Empty CSV"));
+                    const header = rows[0];
+                    const idIdx = header.indexOf('Activity ID');
+                    const nameIdx = header.indexOf('Activity Name');
+                    const descIdx = header.indexOf('Activity Description');
+                    const typeIdx = header.indexOf('Activity Type');
+                    if (idIdx === -1) return reject(new Error("Not a Strava activities.csv"));
+
+                    let count = 0;
+                    for (let i = 1; i < rows.length; i++) {
+                        const row = rows[i];
+                        const id = row[idIdx];
+                        if (!id) continue;
+                        activityMetadata.set(id, {
+                            title: nameIdx !== -1 ? row[nameIdx] : null,
+                            description: descIdx !== -1 ? row[descIdx] : null,
+                            type: typeIdx !== -1 ? row[typeIdx] : null
+                        });
+                        count++;
+                    }
+
+                    let backfilled = 0;
+                    for (const t of tracks) {
+                        const meta = t.activityId && activityMetadata.get(t.activityId);
+                        if (!meta) continue;
+                        if (meta.title) t.title = meta.title;
+                        if (meta.description) t.description = meta.description;
+                        if (meta.type) t.activityType = meta.type;
+                        backfilled++;
+                    }
+
+                    log(`Loaded ${count} activity records from CSV${backfilled ? ` (matched ${backfilled} imported tracks)` : ''}.`);
+                    resolve();
+                };
+                reader.readAsText(file);
+            });
         }
 
         function processGPX(file) {
@@ -581,8 +734,13 @@
                         times.push(timeEl ? new Date(timeEl.textContent) : null);
                     }
 
+                    // Optional per the GPX spec, and not every exporter fills it in --
+                    // only present as a fallback when no activities.csv is imported.
+                    const typeEl = xml.querySelector('trk > type');
+                    const activityType = typeEl ? typeEl.textContent.trim() : null;
+
                     if (points.length > 1) {
-                        finalizeTrack({ points, elevations, times, fileName: file.name });
+                        finalizeTrack({ points, elevations, times, fileName: file.name, activityType });
                         resolve();
                     } else reject(new Error("No coordinates"));
                 };
@@ -616,9 +774,10 @@
                             const session = (data.sessions || [])[0];
                             const timerTimeSec = session && typeof session.total_timer_time === 'number'
                                 ? session.total_timer_time : null;
+                            const activityType = session && typeof session.sport === 'string' ? session.sport : null;
 
                             if (points.length > 1) {
-                                finalizeTrack({ points, elevations, times, fileName: file.name, timerTimeSec });
+                                finalizeTrack({ points, elevations, times, fileName: file.name, timerTimeSec, activityType });
                                 resolve();
                             } else reject(new Error("No GPS records"));
                         });
@@ -632,7 +791,7 @@
          * Builds the polyline + per-activity stats for one imported file,
          * and folds it into the running totals shown in the header.
          */
-        function finalizeTrack({ points, elevations, times, fileName, timerTimeSec }) {
+        function finalizeTrack({ points, elevations, times, fileName, timerTimeSec, activityType }) {
             const layer = L.polyline(points, {
                 color: config.color,
                 weight: config.weight,
@@ -660,11 +819,23 @@
             const avgSpeedKmh = (durationSec && durationSec > 0) ? distanceKm / (durationSec / 3600) : null;
             const avgPaceMinKm = (durationSec && distanceKm > 0) ? (durationSec / 60) / distanceKm : null;
 
+            // activities.csv, when imported (in either order relative to this
+            // file), is the authoritative source for title/description/type --
+            // it's Strava's own data and covers non-GPS activities too. Falls
+            // back to whatever the raw file itself provided.
+            const activityId = extractActivityId(fileName);
+            const meta = activityId ? activityMetadata.get(activityId) : null;
+
             tracks.push({
                 id: trackIdSeq++,
                 points,
+                layer,
                 bounds: layer.getBounds(),
                 fileName,
+                activityId,
+                title: (meta && meta.title) || null,
+                description: (meta && meta.description) || null,
+                activityType: (meta && meta.type) || activityType || null,
                 startTime: validTimes[0] || null,
                 distanceKm, durationSec, avgSpeedKmh, avgPaceMinKm, ascent, descent
             });
@@ -709,6 +880,97 @@
         window.addEventListener('drop', (e) => { e.preventDefault(); handleImport(e.dataTransfer.files); });
 
         /**
+         * Rebuilds the "All" + one-pill-per-type filter row from whatever
+         * distinct types are actually present across imported tracks --
+         * data-driven rather than a hardcoded taxonomy, since Strava's own
+         * type list is large and most of it won't be in any given person's
+         * history.
+         */
+        function renderTypeFilter() {
+            const types = [...new Set(tracks.map(t => t.activityType).filter(Boolean))].sort();
+            if (activeTypeFilter !== 'all' && !types.includes(activeTypeFilter)) activeTypeFilter = 'all';
+
+            const group = document.getElementById('typeFilterGroup');
+            group.innerHTML = ['all', ...types].map(type => `
+                <button data-type="${type}" class="type-filter-btn px-2 py-1 rounded-lg text-xs font-medium transition-colors${type === activeTypeFilter ? ' active' : ''}">
+                    ${type === 'all' ? 'All' : humanizeType(type)}
+                </button>
+            `).join('');
+            group.querySelectorAll('.type-filter-btn').forEach(btn => {
+                btn.addEventListener('click', () => applyTypeFilter(btn.dataset.type));
+            });
+        }
+
+        /**
+         * Shows/hides tracks by adding/removing their layer from trackGroup
+         * (not just an opacity toggle) so hidden tracks are also skipped by
+         * the click-to-inspect hit test and don't cost anything to redraw.
+         */
+        function applyTypeFilter(type) {
+            activeTypeFilter = type;
+            tracks.forEach(t => {
+                const shouldShow = type === 'all' || t.activityType === type;
+                const isShown = trackGroup.hasLayer(t.layer);
+                if (shouldShow && !isShown) {
+                    t.layer.setStyle({ color: config.color, weight: config.weight, opacity: config.opacity });
+                    t.layer.addTo(trackGroup);
+                } else if (!shouldShow && isShown) {
+                    trackGroup.removeLayer(t.layer);
+                }
+            });
+            document.querySelectorAll('.type-filter-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.type === type);
+            });
+        }
+
+        /**
+         * One search box, two behaviors: workout title/description matches
+         * (instant, local) take priority since they're specific to your own
+         * data; falls back to a place-name lookup (Nominatim) so typing a
+         * country/city jumps the map there. Query language is unrestricted --
+         * Nominatim matches non-English input fine -- but results display in
+         * English to stay consistent with the rest of the UI.
+         */
+        async function handleSearch(query) {
+            const q = query.trim();
+            if (!q) return;
+            const qLower = q.toLowerCase();
+
+            const matches = tracks.filter(t =>
+                (t.title && t.title.toLowerCase().includes(qLower)) ||
+                (t.description && t.description.toLowerCase().includes(qLower))
+            );
+            if (matches.length > 0) {
+                matches.sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+                lastMatches = matches;
+                log(`Found ${matches.length} workout(s) matching "${q}".`);
+                if (matches.length === 1) showActivityDetail(matches[0], false);
+                else showActivityList(matches);
+                return;
+            }
+
+            log(`No workout titles match "${q}" -- searching as a place...`);
+            try {
+                const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=jsonv2&limit=1&accept-language=en`);
+                const results = await resp.json();
+                if (!results.length) { log(`No results for "${q}".`, true); return; }
+                const r = results[0];
+                const [south, north, west, east] = r.boundingbox.map(parseFloat);
+                const bounds = L.latLngBounds([south, west], [north, east]);
+                if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
+                else map.setView([parseFloat(r.lat), parseFloat(r.lon)], 12);
+                log(`Jumped to "${r.display_name}".`);
+            } catch (err) {
+                log(`Search failed: ${err.message}`, true);
+            }
+        }
+
+        document.getElementById('searchBtn').addEventListener('click', () => handleSearch(document.getElementById('searchInput').value));
+        document.getElementById('searchInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleSearch(document.getElementById('searchInput').value);
+        });
+
+        /**
          * Click-to-inspect: tracks render on a single shared canvas (for
          * performance with thousands of files), so Leaflet's own per-layer
          * click events aren't available. Instead we hit-test every track's
@@ -748,6 +1010,7 @@
             const matches = [];
 
             for (const t of tracks) {
+                if (!trackGroup.hasLayer(t.layer)) continue; // hidden by the type filter
                 if (!t.bounds.intersects(clickBounds)) continue;
                 let hit = false;
                 for (let i = 1; i < t.points.length; i++) {
