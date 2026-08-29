@@ -231,8 +231,8 @@
         
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-        // Dark theme tiles
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        // Dark theme tiles (CARTO now requires a free API key -- see carto.com/basemaps/apikey)
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2iln_1_734002cfaa312eb627798557', {
             attribution: '&copy; CARTO & OSM',
             subdomains: 'abcd',
             maxZoom: 20
