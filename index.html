@@ -127,6 +127,12 @@
             color: #ffffff;
             border-color: #ea580c;
         }
+        /* Marks the type of whatever activity is currently shown in the
+           detail panel -- purely informational, independent of (and
+           layerable with) the .active filter state above. */
+        .type-filter-btn.viewing {
+            box-shadow: 0 0 0 2px var(--accent);
+        }
         .search-input {
             background-color: var(--bg-surface-alt);
             color: var(--text-page);
@@ -901,6 +907,11 @@
             group.querySelectorAll('.type-filter-btn').forEach(btn => {
                 btn.addEventListener('click', () => toggleTypeFilter(btn.dataset.type));
             });
+
+            // Rebuilding the buttons wipes the "viewing" ring -- restore it
+            // if a track's detail panel happens to be open right now.
+            const current = tracks.find(t => t.id === currentDetailTrackId);
+            syncTypeViewingIndicator(current ? current.activityType : null);
         }
 
         function isTypeFilterActive(type) {
@@ -1091,6 +1102,18 @@
             document.getElementById('activityPanel').classList.add('hidden');
             clearHighlight();
             currentDetailTrackId = null;
+            syncTypeViewingIndicator(null);
+        }
+
+        /**
+         * Rings whichever type pill matches the activity currently shown in
+         * the detail panel -- informational only, does not touch the actual
+         * filter selection or what's visible on the map.
+         */
+        function syncTypeViewingIndicator(type) {
+            document.querySelectorAll('.type-filter-btn').forEach(btn => {
+                btn.classList.toggle('viewing', type != null && btn.dataset.type === type);
+            });
         }
 
         function showActivityList(matches) {
@@ -1099,15 +1122,31 @@
             // picked -- clicking a dense cluster otherwise looked like it
             // did nothing at all.
             highlightTrack(matches[0]);
+            syncTypeViewingIndicator(matches[0].activityType);
 
             document.getElementById('activityPanelTitle').innerText = `${matches.length} activities here`;
             const hc = highlightColor(config.color); // matches what's actually drawn on the map
+
+            // Grouped by workout type (largest group first) rather than one
+            // flat chronological list, so e.g. 10 rides and 1 run at the
+            // same spot don't get jumbled together.
+            const groups = new Map();
+            matches.forEach((t, idx) => {
+                const key = t.activityType || 'Unknown';
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push({ t, idx });
+            });
+            const orderedGroups = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+
             const body = document.getElementById('activityPanelBody');
-            body.innerHTML = matches.map((t, idx) => `
-                <button data-idx="${idx}" class="activity-list-item w-full text-left px-3 py-2 rounded-lg theme-surface-alt theme-hover transition-colors mb-1.5${idx === 0 ? ' ring-1' : ''}" ${idx === 0 ? `style="--tw-ring-color: ${hc}"` : ''}>
-                    <div class="font-medium">${t.startTime ? t.startTime.toLocaleDateString() : t.fileName}${idx === 0 ? ` <span class="text-[10px] font-normal" style="color: ${hc}">● shown</span>` : ''}</div>
-                    <div class="text-xs theme-muted">${t.distanceKm.toFixed(1)} km · ${formatDuration(t.durationSec)}</div>
-                </button>
+            body.innerHTML = orderedGroups.map(([type, items]) => `
+                <div class="text-[10px] uppercase tracking-wide theme-dim font-semibold mt-3 mb-1 first:mt-0">${type === 'Unknown' ? 'Unknown' : humanizeType(type)} (${items.length})</div>
+                ${items.map(({ t, idx }) => `
+                    <button data-idx="${idx}" class="activity-list-item w-full text-left px-3 py-2 rounded-lg theme-surface-alt theme-hover transition-colors mb-1.5${idx === 0 ? ' ring-1' : ''}" ${idx === 0 ? `style="--tw-ring-color: ${hc}"` : ''}>
+                        <div class="font-medium">${t.startTime ? t.startTime.toLocaleDateString() : t.fileName}${idx === 0 ? ` <span class="text-[10px] font-normal" style="color: ${hc}">● shown</span>` : ''}</div>
+                        <div class="text-xs theme-muted">${t.distanceKm.toFixed(1)} km · ${formatDuration(t.durationSec)}</div>
+                    </button>
+                `).join('')}
             `).join('');
             body.querySelectorAll('.activity-list-item').forEach(btn => {
                 btn.addEventListener('click', () => showActivityDetail(matches[parseInt(btn.dataset.idx)], true));
@@ -1118,12 +1157,14 @@
         function showActivityDetail(track, cameFromList) {
             highlightTrack(track);
             currentDetailTrackId = track.id;
+            syncTypeViewingIndicator(track.activityType);
 
             document.getElementById('activityPanelTitle').innerText = track.startTime
                 ? track.startTime.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
                 : track.fileName;
 
             const rows = [
+                ['Type', track.activityType ? humanizeType(track.activityType) : '—'],
                 ['Distance', `${track.distanceKm.toFixed(2)} km`],
                 ['Duration', formatDuration(track.durationSec)],
                 ['Avg Speed', track.avgSpeedKmh != null ? `${track.avgSpeedKmh.toFixed(1)} km/h` : '—'],
