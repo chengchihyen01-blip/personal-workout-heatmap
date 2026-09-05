@@ -1,1 +1,6 @@
 .DS_Store
+
+# Personal Strava export data -- for local testing/troubleshooting only,
+# never to be committed or pushed.
+Strava Eport/
+_test_data/
