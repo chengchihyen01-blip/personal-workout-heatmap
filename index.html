@@ -187,7 +187,7 @@
                     </svg>
                     <span class="hidden sm:inline">Import Workout Files (GPX/FIT)</span>
                     <span class="sm:hidden">Import</span>
-                    <input type="file" id="mainInput" class="hidden" multiple accept=".gpx,.fit,.csv">
+                    <input type="file" id="mainInput" class="hidden" multiple accept=".gpx,.fit,.csv,.gz">
                 </label>
             </div>
         </div>
@@ -203,7 +203,7 @@
                 <h2 class="text-xl sm:text-2xl font-bold mb-4 italic theme-text">Ready to light up the streets?</h2>
                 <p class="theme-muted mb-6 leading-relaxed">
                     Import your <strong>.GPX</strong> or <strong>.FIT</strong> activity files.<br>
-                    Drop multiple files here to visualize your history.<br>
+                    Straight from a Strava export works too — <strong>.gz</strong> files unzip automatically.<br>
                     Click any track on the map for its stats.
                 </p>
                 <button onclick="document.getElementById('welcomeOverlay').classList.add('opacity-0', 'pointer-events-none')" class="bg-orange-600 hover:bg-orange-500 text-white px-8 py-3 rounded-xl transition-all font-bold">
@@ -326,6 +326,40 @@
                 .replace(/\s+/g, ' ')
                 .trim()
                 .replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        /**
+         * Strava's CSV and the FIT spec name the same sport differently
+         * ("Ride" vs "cycling", "Swim" vs "swimming"), which otherwise splits
+         * one sport across two filter pills and makes it look like a type
+         * wasn't detected at all. Only the genuine synonyms are listed --
+         * anything unrecognised keeps its own name, so the filter stays
+         * data-driven for the long tail of activity types.
+         */
+        const TYPE_ALIASES = {
+            ride: 'Cycling', cycling: 'Cycling', ebikeride: 'Cycling', virtualride: 'Cycling',
+            gravelride: 'Cycling', mountainbikeride: 'Cycling', handcycle: 'Cycling',
+            velomobile: 'Cycling', roadbiking: 'Cycling', cyclocross: 'Cycling',
+            run: 'Running', running: 'Running', virtualrun: 'Running', trailrun: 'Running',
+            swim: 'Swimming', swimming: 'Swimming', openwaterswimming: 'Swimming', lapswimming: 'Swimming',
+            walk: 'Walking', walking: 'Walking',
+            hike: 'Hiking', hiking: 'Hiking',
+            rockclimb: 'Rock Climbing', rockclimbing: 'Rock Climbing', climbing: 'Rock Climbing',
+            bouldering: 'Rock Climbing',
+            standuppaddling: 'Stand Up Paddleboarding', standuppaddleboarding: 'Stand Up Paddleboarding',
+            canoe: 'Canoeing', canoeing: 'Canoeing', kayak: 'Kayaking', kayaking: 'Kayaking',
+            skateboard: 'Skateboarding', skateboarding: 'Skateboarding',
+            row: 'Rowing', rowing: 'Rowing', surf: 'Surfing', surfing: 'Surfing',
+            kitesurf: 'Kitesurfing', windsurf: 'Windsurfing',
+            alpineski: 'Alpine Ski', backcountryski: 'Backcountry Ski', nordicski: 'Nordic Ski',
+            snowboard: 'Snowboarding', snowshoe: 'Snowshoeing', iceskate: 'Ice Skating',
+            inlineskate: 'Inline Skating', weighttraining: 'Weight Training'
+        };
+
+        function normalizeType(raw) {
+            if (!raw) return null;
+            const key = String(raw).toLowerCase().replace(/[^a-z0-9]/g, '');
+            return TYPE_ALIASES[key] || humanizeType(raw);
         }
 
         /**
@@ -654,11 +688,26 @@
         const mainInput = document.getElementById('mainInput');
         mainInput.addEventListener('change', (e) => handleImport(e.target.files));
 
+        /**
+         * Strava's bulk export ships every activity gzipped (.fit.gz /
+         * .gpx.gz -- its own activities.csv references them that way), so
+         * unzip transparently rather than ignoring those files. Uses the
+         * browser's native DecompressionStream; no library needed.
+         */
+        async function gunzipFile(file) {
+            if (typeof DecompressionStream === 'undefined') {
+                throw new Error('Browser cannot unzip .gz');
+            }
+            const stream = file.stream().pipeThrough(new DecompressionStream('gzip'));
+            const buf = await new Response(stream).arrayBuffer();
+            return new File([buf], file.name.replace(/\.gz$/i, ''));
+        }
+
         async function handleImport(files) {
             const list = Array.from(files);
             if (!list.length) return;
 
-            if (list.some(f => f.name.toLowerCase().endsWith('.fit'))) {
+            if (list.some(f => /\.fit(\.gz)?$/i.test(f.name))) {
                 const ok = await waitForParser();
                 if (!ok) { log("Aborted: Parser not ready.", true); return; }
             }
@@ -667,16 +716,40 @@
             document.getElementById('stats').classList.remove('hidden');
             log(`Loading ${list.length} files...`);
 
-            for (const file of list) {
-                const name = file.name.toLowerCase();
+            // Counted so the import can report what happened -- files used to
+            // disappear with no explanation (an unsupported extension logged
+            // nothing at all, and per-file failures scrolled out of the log).
+            const tally = { imported: 0, noGps: 0, unsupported: 0, failed: 0 };
+
+            for (let file of list) {
                 try {
-                    if (name.endsWith('.gpx')) await processGPX(file);
-                    else if (name.endsWith('.fit')) await processFIT(file);
+                    if (/\.gz$/i.test(file.name)) file = await gunzipFile(file);
+                    const name = file.name.toLowerCase();
+                    if (name.endsWith('.gpx')) { await processGPX(file); tally.imported++; }
+                    else if (name.endsWith('.fit')) { await processFIT(file); tally.imported++; }
                     else if (name.endsWith('.csv')) await processCSV(file);
+                    else {
+                        tally.unsupported++;
+                        log(`Skipped ${file.name.substring(0, 20)}: unsupported file type`, true);
+                    }
                 } catch (err) {
-                    log(`Fail: ${file.name.substring(0, 15)}... ${err.message}`, true);
+                    // Activities with no GPS (indoor trainer rides, pool swims,
+                    // gym/climbing sessions) simply can't be drawn on a map --
+                    // that's expected, so count them separately from real errors.
+                    if (/No GPS records|No coordinates/i.test(err.message)) tally.noGps++;
+                    else {
+                        tally.failed++;
+                        log(`Fail: ${file.name.substring(0, 15)}... ${err.message}`, true);
+                    }
                 }
             }
+
+            const notes = [];
+            if (tally.noGps) notes.push(`${tally.noGps} without GPS data`);
+            if (tally.unsupported) notes.push(`${tally.unsupported} unsupported`);
+            if (tally.failed) notes.push(`${tally.failed} failed`);
+            log(`Imported ${tally.imported} of ${list.length} files${notes.length ? ` — skipped ${notes.join(', ')}` : ''}.`,
+                tally.imported === 0 && list.length > 0);
 
             renderTypeFilter();
             applyTypeFilter(); // newly-imported tracks respect whatever filter is already active
@@ -730,7 +803,7 @@
                         if (!meta) continue;
                         if (meta.title) t.title = meta.title;
                         if (meta.description) t.description = meta.description;
-                        if (meta.type) t.activityType = meta.type;
+                        if (meta.type) t.activityType = normalizeType(meta.type);
                         backfilled++;
                     }
 
@@ -860,7 +933,7 @@
                 activityId,
                 title: (meta && meta.title) || null,
                 description: (meta && meta.description) || null,
-                activityType: (meta && meta.type) || activityType || null,
+                activityType: normalizeType((meta && meta.type) || activityType),
                 startTime: validTimes[0] || null,
                 distanceKm, durationSec, avgSpeedKmh, avgPaceMinKm, ascent, descent
             });
